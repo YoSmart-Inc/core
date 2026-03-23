@@ -99,7 +99,7 @@ class YoLinkLocalHubConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         existing_data = self._reauth_entry.data if self._reauth_entry else {}
 
-        if user_input is not None and self._reauth_entry is not None:
+        if user_input is not None and self._reauth_entry:
             merged_input = {**existing_data, **user_input}
             try:
                 await validate_input(self.hass, merged_input)
