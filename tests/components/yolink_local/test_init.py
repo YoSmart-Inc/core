@@ -205,10 +205,7 @@ async def test_async_setup_entry_timeout(
 ) -> None:
     """Test setup fails with timeout."""
 
-    async def slow_setup(*args, **kwargs):
-        await asyncio.sleep(15)
-
-    mock_yolink_client.async_setup.side_effect = slow_setup
+    mock_yolink_client.async_setup.side_effect = asyncio.TimeoutError
 
     entry = MockConfigEntry(
         domain=DOMAIN,

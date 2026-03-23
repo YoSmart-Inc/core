@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from typing import Any
 
@@ -9,7 +10,7 @@ from aiohttp import ClientError
 import voluptuous as vol
 from yolink.local_hub_client import YoLinkLocalHubClient
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -56,6 +57,8 @@ class YoLinkLocalHubConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
     MINOR_VERSION = 1
 
+    _reauth_entry: ConfigEntry | None = None
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -78,6 +81,60 @@ class YoLinkLocalHubConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
+
+    async def async_step_reauth(
+        self, user_input: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle re-authentication when credentials become invalid."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle re-authentication confirmation."""
+        errors: dict[str, str] = {}
+        existing_data = self._reauth_entry.data if self._reauth_entry else {}
+
+        if user_input is not None and self._reauth_entry is not None:
+            merged_input = {**existing_data, **user_input}
+            try:
+                await validate_input(self.hass, merged_input)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during reauth")
+                errors["base"] = "unknown"
+            else:
+                self.hass.config_entries.async_update_entry(
+                    self._reauth_entry,
+                    data=merged_input,
+                )
+                await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HOST, default=existing_data.get(CONF_HOST, "")
+                    ): str,
+                    vol.Required(
+                        CONF_NET_ID, default=existing_data.get(CONF_NET_ID, "")
+                    ): str,
+                    vol.Required(
+                        CONF_CLIENT_ID, default=existing_data.get(CONF_CLIENT_ID, "")
+                    ): str,
+                    vol.Required(CONF_CLIENT_SECRET): str,
+                }
+            ),
+            errors=errors,
         )
 
 

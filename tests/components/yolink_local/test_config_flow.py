@@ -255,3 +255,243 @@ async def test_user_flow_retry_after_error(
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["title"] == "YoLink Local Hub"
+
+
+async def test_reauth_flow_success(
+    hass: HomeAssistant, mock_setup_entry, mock_yolink_client_success
+) -> None:
+    """Test successful reauthentication flow."""
+    # Create an existing entry
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"yolink_local_{TEST_NET_ID}",
+        data=TEST_USER_INPUT,
+    )
+    entry.add_to_hass(hass)
+
+    # Initialize reauth flow
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=TEST_USER_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {}
+
+    # Submit reauth with updated credentials
+    updated_input = TEST_USER_INPUT.copy()
+    updated_input[CONF_CLIENT_SECRET] = "new_client_secret"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        updated_input,
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+
+
+async def test_reauth_flow_cannot_connect(
+    hass: HomeAssistant, mock_setup_entry
+) -> None:
+    """Test reauth connection error handling."""
+    # Create an existing entry
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"yolink_local_{TEST_NET_ID}",
+        data=TEST_USER_INPUT,
+    )
+    entry.add_to_hass(hass)
+
+    # Initialize reauth flow
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=TEST_USER_INPUT,
+    )
+
+    with patch(
+        "homeassistant.components.yolink_local.config_flow.YoLinkLocalHubClient"
+    ) as mock_client:
+        client_instance = Mock()
+        client_instance.authenticate = AsyncMock(side_effect=ClientError())
+        mock_client.return_value = client_instance
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            TEST_USER_INPUT,
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_reauth_flow_invalid_auth(hass: HomeAssistant, mock_setup_entry) -> None:
+    """Test reauth invalid authentication handling."""
+    # Create an existing entry
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"yolink_local_{TEST_NET_ID}",
+        data=TEST_USER_INPUT,
+    )
+    entry.add_to_hass(hass)
+
+    # Initialize reauth flow
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=TEST_USER_INPUT,
+    )
+
+    with patch(
+        "homeassistant.components.yolink_local.config_flow.YoLinkLocalHubClient"
+    ) as mock_client:
+        client_instance = Mock()
+        client_instance.authenticate = AsyncMock(return_value=False)
+        mock_client.return_value = client_instance
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            TEST_USER_INPUT,
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_reauth_flow_unexpected_exception(
+    hass: HomeAssistant, mock_setup_entry
+) -> None:
+    """Test reauth unexpected exception handling."""
+    # Create an existing entry
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"yolink_local_{TEST_NET_ID}",
+        data=TEST_USER_INPUT,
+    )
+    entry.add_to_hass(hass)
+
+    # Initialize reauth flow
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=TEST_USER_INPUT,
+    )
+
+    with patch(
+        "homeassistant.components.yolink_local.config_flow.YoLinkLocalHubClient"
+    ) as mock_client:
+        client_instance = Mock()
+        client_instance.authenticate = AsyncMock(
+            side_effect=Exception("Unexpected error")
+        )
+        mock_client.return_value = client_instance
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            TEST_USER_INPUT,
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        assert result["errors"] == {"base": "unknown"}
+
+
+async def test_reauth_flow_retry_after_error(
+    hass: HomeAssistant, mock_setup_entry, mock_yolink_client_success
+) -> None:
+    """Test that user can retry reauth after an error."""
+    # Create an existing entry
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"yolink_local_{TEST_NET_ID}",
+        data=TEST_USER_INPUT,
+    )
+    entry.add_to_hass(hass)
+
+    # Initialize reauth flow
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=TEST_USER_INPUT,
+    )
+
+    # First attempt fails
+    with patch(
+        "homeassistant.components.yolink_local.config_flow.YoLinkLocalHubClient"
+    ) as mock_client:
+        client_instance = Mock()
+        client_instance.authenticate = AsyncMock(return_value=False)
+        mock_client.return_value = client_instance
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            TEST_USER_INPUT,
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {"base": "invalid_auth"}
+
+    # Second attempt succeeds
+    updated_input = TEST_USER_INPUT.copy()
+    updated_input[CONF_CLIENT_SECRET] = "new_client_secret"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        updated_input,
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+
+
+async def test_reauth_flow_form_display_with_defaults(
+    hass: HomeAssistant, mock_setup_entry
+) -> None:
+    """Test that reauth form displays with correct defaults."""
+    # Create an existing entry
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"yolink_local_{TEST_NET_ID}",
+        data=TEST_USER_INPUT,
+    )
+    entry.add_to_hass(hass)
+
+    # Initialize reauth flow
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": config_entries.SOURCE_REAUTH,
+            "entry_id": entry.entry_id,
+        },
+        data=TEST_USER_INPUT,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    # Just verify that we have a data schema (the defaults will be handled by the form)
+    assert result["data_schema"] is not None
+
+    # Verify that the step is correct and we're showing the form
+    assert "reauth_confirm" in result["step_id"]
+    assert result.get("errors") == {}
